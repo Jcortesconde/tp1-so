@@ -90,7 +90,7 @@ int Grafo::pesoTotal(){
       acum += (*itEje).peso;
     }
   }
-  return acum;
+  return acum/2;
 }
 
 void Grafo::imprimirGrafo() {

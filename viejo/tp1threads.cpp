@@ -194,6 +194,10 @@ bool addToQueue(int threadQuePintara, EstadoThread* thread, int nodo, int nodoAd
 
     thread->threadsToEat.push(nuevaQueueInfo);
 
+    pthread_mutex_lock(&imprimir);
+    fprintf(stderr, "%d va a ser comido por %d\n",threadQuePintara, myColor);
+    pthread_mutex_unlock(&imprimir);
+
     pthread_mutex_unlock(&eating_mutex[myColor]);
   }
 }
@@ -208,10 +212,6 @@ void eatHandler(EstadoThread * thread,int threadQuePinto, int nodo, int nodoAdj)
     thread->myEater.exchange(threadQuePinto);
     addToQueue(thread->indice, infoThreads[threadQuePinto],nodo, nodoAdj);
     
-    pthread_mutex_lock(&imprimir);
-    fprintf(stderr, "[%d] va a ser comido por %d\n", thread -> indice, threadQuePinto);
-    pthread_mutex_unlock(&imprimir);
-
   }
   else{
     int supremeEater= infoThreads[threadQuePinto]->myEater;    
@@ -236,11 +236,13 @@ void eatHandler(EstadoThread * thread,int threadQuePinto, int nodo, int nodoAdj)
       expected = -1;
     } 
     if(thread -> indice != supremeEater){
-      if(supremeEater==-1){
-          pthread_mutex_lock(&imprimir);
-          fprintf(stderr, "[%d] es el primero de esta cadena, el anterior fue %d\n", thread -> indice, threadQuePinto);
-          pthread_mutex_unlock(&imprimir);
-         addToQueue(threadQuePinto,thread, nodo,nodoAdj);
+      if(supremeEater==-1 ){
+          if(threadQuePinto != thread -> indice){
+            pthread_mutex_lock(&imprimir);
+            fprintf(stderr, "[%d] es el primero de esta cadena, el anterior fue %d\n", thread -> indice, threadQuePinto);
+            pthread_mutex_unlock(&imprimir);
+            addToQueue(threadQuePinto,thread, nodo,nodoAdj);
+          }
       }
       else{
 
@@ -271,21 +273,18 @@ void * mstSecuencial(void *thread_void){
     bool comimos = false;
 
     pthread_mutex_lock(&eating_mutex[myColor]);
-    pthread_mutex_lock(&imprimir);
-    fprintf(stderr, "[%d] esta por comer\n", myColor);
-    pthread_mutex_unlock(&imprimir);
 
     while(!threadInfo->threadsToEat.empty()){
 
       comer(threadInfo);
       comimos = true;
+      pthread_mutex_lock(&imprimir);
+      fprintf(stderr, "[%d] dejo de comer\n", myColor);
+      pthread_mutex_unlock(&imprimir);
     }   
 
     pthread_mutex_unlock(&eating_mutex[myColor]);
 
-    pthread_mutex_lock(&imprimir);
-    fprintf(stderr, "[%d] dejo de comer\n", myColor);
-    pthread_mutex_unlock(&imprimir);
 
 
     if(threadInfo->pintados->numEjes == g -> cantidadNodos() -1 ){
@@ -363,7 +362,7 @@ void * mstSecuencial(void *thread_void){
   pthread_mutex_unlock(&infoThreads[myColor]->deadThread);
 
   pthread_mutex_lock(&imprimir);
-  fprintf(stderr, "OUTPUT %d %d %d %d\n", myColor, threadInfo -> pintados -> cantidadNodos(),threadInfo -> pintados -> numEjes, threadInfo -> pintados -> pesoTotal());
+  fprintf(stderr, "[%d] OUTPUT nodos encontrados %d, ejes recorridos %d, peso %d\n", myColor, threadInfo -> pintados -> cantidadNodos(),threadInfo -> pintados -> numEjes, threadInfo -> pintados -> pesoTotal());
   pthread_mutex_unlock(&imprimir);
 
 }
