@@ -92,6 +92,10 @@ void comerCola(EstadoThread *otroThread, EstadoThread *thread){
     queueInfo elemento = otroThread -> threadsToEat.front();
     otroThread -> threadsToEat.pop();
     thread -> threadsToEat.push(elemento);
+    
+    pthread_mutex_lock(&imprimir);
+    fprintf(stderr, "[%d] se comio a %d que tenia en la cola a %d\n", thread -> indice, otroThread->indice, elemento.otroThread);
+    pthread_mutex_unlock(&imprimir);
   }
 }
 //si el nodo no tiene el color del thread, le cambia el color para q sea del thread
@@ -177,6 +181,9 @@ else if(nodosThread > 0 && nodosOtroThread > 0){
   actualizarDistanciasDespuesDeComer(otroThread,thread);
   comerCola(otroThread,thread);
 
+  pthread_mutex_lock(&imprimir);
+  fprintf(stderr, "[%d] dejo de comer a %d\n", myColor, comida.otroThread);
+  pthread_mutex_unlock(&imprimir);
 }
 
 bool addToQueue(int threadQuePintara, EstadoThread* thread, int nodo, int nodoAdj){
@@ -186,6 +193,7 @@ bool addToQueue(int threadQuePintara, EstadoThread* thread, int nodo, int nodoAd
   //si nadie lo agrego a su cola lo agrego yo
   if(infoThreads[threadQuePintara]-> estado.compare_exchange_strong(added, 2) 
     || infoThreads[threadQuePintara]-> estado.compare_exchange_strong(yaMurio, 1)){
+
     queueInfo nuevaQueueInfo(nodo,
               nodoAdj,
               g -> damePeso(nodo,nodoAdj),
@@ -195,7 +203,7 @@ bool addToQueue(int threadQuePintara, EstadoThread* thread, int nodo, int nodoAd
     thread->threadsToEat.push(nuevaQueueInfo);
 
     pthread_mutex_lock(&imprimir);
-    fprintf(stderr, "%d va a ser comido por %d\n",threadQuePintara, myColor);
+    fprintf(stderr, "%d va a ser comido por %d con el nodo %d, su adj es %d\n",threadQuePintara, myColor, nodo, nodoAdj);
     pthread_mutex_unlock(&imprimir);
 
     pthread_mutex_unlock(&eating_mutex[myColor]);
@@ -208,7 +216,7 @@ void eatHandler(EstadoThread * thread,int threadQuePinto, int nodo, int nodoAdj)
   fprintf(stderr, "[%d] esta handeleando a %d\n", thread -> indice, threadQuePinto);
   pthread_mutex_unlock(&imprimir);
 
-  if (thread->indice > threadQuePinto){
+  if (thread->indice > threadQuePinto){//esta bien este add to queue sin frenar?
     thread->myEater.exchange(threadQuePinto);
     addToQueue(thread->indice, infoThreads[threadQuePinto],nodo, nodoAdj);
     
@@ -221,22 +229,37 @@ void eatHandler(EstadoThread * thread,int threadQuePinto, int nodo, int nodoAdj)
     //threadQuePinto = 5
 
     pthread_mutex_lock(&imprimir);
-    fprintf(stderr, "[%d] tiene que comer a %d, o a su comedor mas grande\n", thread -> indice, threadQuePinto);
+    fprintf(stderr, "[%d] tiene que comer a %d, o a su comedor mas chico\n", thread -> indice, threadQuePinto);
     pthread_mutex_unlock(&imprimir);
 
     while(! infoThreads[threadQuePinto]->myEater.compare_exchange_strong(expected, value)){
+      
+      pthread_mutex_lock(&imprimir);
+      fprintf(stderr, "[%d] %d esta en la cola de %d\n", thread -> indice,  threadQuePinto, expected);
+      pthread_mutex_unlock(&imprimir);
+      if(threadQuePinto == expected){
+        std::string message = "["+std::to_string(thread->indice) +"] "+ std::to_string(threadQuePinto) +" esta en la cola de "+std::to_string(expected);
+        throw std::invalid_argument( message );
+      }
       if(  expected < thread->indice){
       pthread_mutex_lock(&imprimir);
       fprintf(stderr, "[%d] es mas chico %d?\n", thread -> indice,  supremeEater);
       pthread_mutex_unlock(&imprimir);
           break;
       }
+      if(expected == thread -> indice){
+       pthread_mutex_lock(&imprimir);
+      fprintf(stderr, "[%d] es el que estaba en la cabeza %d?\n", thread -> indice,  supremeEater);
+      pthread_mutex_unlock(&imprimir);
+          break; 
+      }
       threadQuePinto = supremeEater;
       supremeEater = infoThreads[threadQuePinto]->myEater;
       expected = -1;
-    } 
+    }
     if(thread -> indice != supremeEater){
       if(supremeEater==-1 ){
+        //este if esta de mas?
           if(threadQuePinto != thread -> indice){
             pthread_mutex_lock(&imprimir);
             fprintf(stderr, "[%d] es el primero de esta cadena, el anterior fue %d\n", thread -> indice, threadQuePinto);
@@ -244,8 +267,7 @@ void eatHandler(EstadoThread * thread,int threadQuePinto, int nodo, int nodoAdj)
             addToQueue(threadQuePinto,thread, nodo,nodoAdj);
           }
       }
-      else{
-
+      else{ 
         pthread_mutex_lock(&imprimir);
         fprintf(stderr, "[%d] habia alguien mas chico %d, me comen\n", thread -> indice,  supremeEater);
         pthread_mutex_unlock(&imprimir);
@@ -256,6 +278,33 @@ void eatHandler(EstadoThread * thread,int threadQuePinto, int nodo, int nodoAdj)
   }
 }
 
+int get_unpainted_node(){
+  int posible_idx = rand() % g -> cantidadNodos();
+  
+  int expected= BLANCO;
+  int desired = BLANCO;
+  vector<int> passed(colores.size(), 0);
+  int cant_passed = 0;
+  int cantidad_iteraciones = g -> cantidadNodos() / 2;
+  int iter = 0;
+  while(!colores[posible_idx] -> compare_exchange_strong(expected, desired) && cant_passed != colores.size() && iter <= cantidad_iteraciones){
+    expected = BLANCO;
+    iter++;
+    if(passed[posible_idx] == 0){
+      passed[posible_idx] = 1;
+      cant_passed++;
+    }
+
+    posible_idx =  rand() % g -> cantidadNodos();
+  }
+  if(cant_passed == colores.size()){
+    posible_idx = -1;
+  }
+
+
+  return posible_idx;
+}
+
 void * mstSecuencial(void *thread_void){
 
   //INICIALIZO
@@ -264,10 +313,18 @@ void * mstSecuencial(void *thread_void){
   // Semilla random
   srand(time(0));
   //Selecciono un nodo al azar del grafo para empezar
-  int nodoActual = rand() % g -> cantidadNodos();
-  int valor = 0;//var de debugging
+  int nodoActual = get_unpainted_node();
+
+  pthread_mutex_lock(&imprimir);
+  fprintf(stderr, "[%d] empieza por el %d\n", myColor, nodoActual);
+  pthread_mutex_unlock(&imprimir);
+  //Si ya no hay mas nodos pongo el estado en que se muera
+  if(nodoActual == -1){
+      threadInfo -> estado.exchange(-1);
+  }
+
   
-  for(int i = 0;  i< g->cantidadNodos()*2
+  for(int i = 0;  i< g->cantidadNodos()
                   && threadInfo->pintados->numEjes < g -> cantidadNodos() -1 
                   && threadInfo -> estado == 0;  i++){
     bool comimos = false;
@@ -278,11 +335,8 @@ void * mstSecuencial(void *thread_void){
 
       comer(threadInfo);
       comimos = true;
-      pthread_mutex_lock(&imprimir);
-      fprintf(stderr, "[%d] dejo de comer\n", myColor);
-      pthread_mutex_unlock(&imprimir);
-    }   
-
+    } 
+    
     pthread_mutex_unlock(&eating_mutex[myColor]);
 
 
@@ -312,10 +366,11 @@ void * mstSecuencial(void *thread_void){
     }
     else{
       //La primera vez no lo agrego porque necesito dos nodos para unir
-
+      /*
       pthread_mutex_lock(&imprimir);
       fprintf(stderr, "[%d] agrega el nodo %d\n", myColor, nodoActual);
       pthread_mutex_unlock(&imprimir);
+      */
       int otroNodo = threadInfo ->  distanciaNodo[nodoActual];
       if(otroNodo != -1){
           threadInfo -> pintados -> insertarEje(nodoActual, otroNodo, g -> damePeso(nodoActual,otroNodo));
@@ -356,10 +411,9 @@ void * mstSecuencial(void *thread_void){
   pthread_mutex_unlock(&eating_mutex[myColor]);  
   int encolado=2;
   int inicializado=0;
-  pthread_mutex_lock(&infoThreads[myColor]->deadThread);
+  /*aca tendriamos que hacer el reset diria que hasta llamar a esta funcion con un nuevo estadoThread y listo si el estado es distinto de -1*/
   threadInfo -> estado.compare_exchange_strong(encolado,1);
-  threadInfo->estado.compare_exchange_strong(inicializado,-1);  
-  pthread_mutex_unlock(&infoThreads[myColor]->deadThread);
+  threadInfo -> estado.compare_exchange_strong(inicializado,-1);  
 
   pthread_mutex_lock(&imprimir);
   fprintf(stderr, "[%d] OUTPUT nodos encontrados %d, ejes recorridos %d, peso %d\n", myColor, threadInfo -> pintados -> cantidadNodos(),threadInfo -> pintados -> numEjes, threadInfo -> pintados -> pesoTotal());
@@ -392,8 +446,8 @@ int main(int argc, char const * argv[]) {
   for(int i=0; i<g->cantidadNodos(); i++){
     int aux  = BLANCO;
    
-    colores[i]= new atomic_int();
-    *colores[i]= aux;
+    colores[i] = new atomic_int();
+    *colores[i] = aux;
     
   }
 
