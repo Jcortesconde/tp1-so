@@ -27,8 +27,24 @@ struct threadParams{
     vector<int> colores;
 };
 
+struct infoEncolar{
+    int otro_thread_id;
+	int nodo_contiguo;
+    infoEncolar(int id,int nodo){
+    	otro_thread_id = id;
+    	nodo_contiguo = nodo;
+    }
+};
+
+void restart_thread(threadParams);
+
 //COLORES de los nodos
 vector<int> g_colores;
+
+//para saber si ya se encolo en otro thread
+vector<atomic_bool *>  encolaron;
+//info de con quien encolar y cual es el nodo
+vector<infoEncolar *> encolar_con;
 
 vector<queue<threadParams*>> g_colas_fusion;
 
@@ -166,6 +182,9 @@ void pintarVecinos(int nodo, threadParams &param){
 }
 //El emisor le pasa su data al receptor
 void fusionarArboles(threadParams &emisor, threadParams &receptor){
+	debugMutex.lock();
+	printf("%d se esta metiendo en %d con el nodo %d\n", emisor.id, receptor.id, emisor.nodoActual);
+	debugMutex.unlock();
 	//fusiono los vectores de distancias de los dos threads
 	for(int i = 0; i < g_colores.size(); i++){
 		if(emisor.colores[i] == emisor.id){
@@ -183,7 +202,6 @@ void fusionarArboles(threadParams &emisor, threadParams &receptor){
 			receptor.distanciaNodo[i] = receptor.distancia[i] < emisor.distancia[i]
 								? receptor.distanciaNodo[i] : emisor.distanciaNodo[i];					
 			receptor.colores[i] = GRIS;
-			
 		}
 
 	}
@@ -242,38 +260,67 @@ bool chequeoDeCola(threadParams &thread){
 //retorno si pude pintar el nodo de mi color o no
 bool pintarNodo(int num, threadParams &param){
 	g_colores_mutex[num].lock();
-	int colorFusion = g_colores[num];
-	assert(colorFusion != param.id);
-	if(colorFusion != BLANCO){
+	int thread_que_pinto = g_colores[num];
+	assert(thread_que_pinto != param.id);
+	bool expected = false;
+	bool value = true;
+	if(thread_que_pinto != BLANCO){
 		//Si mi id es mayor al del thread con el que colisione, me encolo y espero
-		if(colorFusion < param.id){
-			//Lockeo la cola a la cual me voy a pushear
-			g_colas_mutex[g_colores[num]].lock();
-			//Me pusheo a la cola
-			g_colas_fusion[g_colores[num]].push(&param);
-			//Unlockeo la cola a la cual me pushie
-			g_colas_mutex[g_colores[num]].unlock();
-
-			// Espero a que me atiendan
+		g_colas_mutex[param.id].lock();
+		bool encolar_con_otro = false;
+		if( !encolaron[param.id] -> compare_exchange_strong(expected, value)){
+			thread_que_pinto = encolar_con[param.id] -> otro_thread_id;
+			param.nodoActual = encolar_con[param.id] -> nodo_contiguo;
+			encolar_con_otro = true;
+		}
+		g_colas_mutex[param.id].unlock();
+		if(thread_que_pinto < param.id || encolar_con_otro){
 			//Unlockeo el nodo por si otro tambien lo quiere pintar
 			g_colores_mutex[num].unlock();
+			//Lockeo la cola a la cual me voy a pushear
+			
+			g_colas_mutex[thread_que_pinto].lock();
+			//Me pusheo a la cola
+			g_colas_fusion[thread_que_pinto].push(&param);
+			//Unlockeo la cola a la cual me pushie
+			g_colas_mutex[thread_que_pinto].unlock();
 	        
+			// Espero a que me atiendan
 			while(!atendidos[param.id]){}
-				return false; 
+				return false;	
 		}
 		else{
 			//Unlockeo el nodo por si otro tambien lo quiere pintar
 			g_colores_mutex[num].unlock();
+			//if(g_colas_fusion[param.id].empty()) return false;
+			
+			debugMutex.lock();
+			printf("[%d] me econtre con %d por el nodo %d\n", param.id, thread_que_pinto, num);
+			debugMutex.unlock();
+			
+			g_colas_mutex[thread_que_pinto].lock();
+			if(g_colas_fusion[param.id].empty() && encolaron[thread_que_pinto] -> compare_exchange_strong(expected, value)){
+				encolar_con[thread_que_pinto] = new infoEncolar(param.id, num);
+				g_colas_mutex[thread_que_pinto].unlock();
+				while(g_colas_fusion[param.id].empty() && !algunoTermino){
+					//ojo con optimizar sin poner algo aca
+				}
+			}
+			else{
+				g_colas_mutex[thread_que_pinto].unlock();
+			}
 			while(!g_colas_fusion[param.id].empty()){
 				chequeoDeCola(param);
-			};
+			}
 			return true;
 		}
 	} else{
 			param.arbol_local.numVertices += 1;
 			g_colores[num] = param.id;
 			param.colores[num] = param.id;
-			param.arbol_local.insertarEje(num,param.distanciaNodo[num],param.distancia[num]);
+			if(param.arbol_local.numVertices > 1){
+				param.arbol_local.insertarEje(num,param.distanciaNodo[num],param.distancia[num]);
+			}
 			param.distancia[num] = IMAX;
 			
 		}
@@ -296,16 +343,20 @@ bool todoDeUnColor(int id){
 }
 
 void* mstThread(void* p_param){
+
+	
 	auto pesoEjes = 0;
 	threadParams param = *((threadParams*)p_param);
+	param.nodoActual = 0;//rand() % g_grafo.numVertices;
 
 	  while(param.arbol_local.numVertices != g_grafo.numVertices){
 		auto numEjes = param.arbol_local.numEjes;
 	  	if(algunoTermino) goto end;
 	  	int numeroVertices = param.arbol_local.numVertices;
+
 		//Lo pinto de NEGRO para marcar que lo agregué al árbol y borro la distancia
 		if(!pintarNodo(param.nodoActual,param)){
-		    goto end;
+		    goto restart;
 		}
 		
 		//QUIERO ACTUALIZAR MIS VECINOS SOLO SI PINTE ALGO O ME FUSIONE, SI NO, NO!
@@ -322,6 +373,7 @@ void* mstThread(void* p_param){
 		}
 
 	  }
+   	printf("[%d] end with vertices %d, with edges %d\n", param.id, param.arbol_local.numVertices, param.arbol_local.numEjes);
 	algunoTermino = true;
 	//param.arbol_local.imprimirGrafo();
 	assert(param.arbol_local.numEjes == (g_grafo.numVertices - 1));
@@ -329,11 +381,21 @@ void* mstThread(void* p_param){
 	for(int i = 0; i < atendidos.size(); i++){
 		atendidos[i] = true;
 	}
+    restart:
+    	restart_thread(param);
+    	printf("[%d] restart\n", param.id);
     end:
     printf("[%d] vertices %d peso %d\n", param.id, param.arbol_local.numVertices, param.arbol_local.pesoTotal());
     return nullptr;
 }
 
+void restart_thread( threadParams param){
+	param.arbol_local = Grafo();
+	param.distancia.assign(g_grafo.numVertices,IMAX);
+	param.distanciaNodo.assign(g_grafo.numVertices,-1);
+	param.colores = vector<int>(g_grafo.numVertices, BLANCO);
+	mstThread(&param);
+}
 
 void mstParalelo(int cantThreads){
 	pthread_t thread[cantThreads];
@@ -342,11 +404,20 @@ void mstParalelo(int cantThreads){
 	//Le asignamos un numero random unico a cada thread
 	vector<int> randomNodes(g_grafo.numVertices);
 	//INICIALIZACION DE VARIABLES GLOBALES
+	encolaron.resize(cantThreads);
+	for(int i=0; i<cantThreads; i++){
+	bool aux  = false;
+	encolaron[i] = new atomic_bool();
+	*encolaron[i] = aux;
+	}
+
 	g_colores = vector<int>(g_grafo.numVertices, BLANCO);
 	g_colores_mutex = vector<mutex>(g_grafo.numVertices);
 	g_colas_fusion = vector<queue<threadParams*>>(cantThreads);
 	g_colas_mutex = vector<mutex>(cantThreads);
 	g_fusion_mutex = vector<mutex>(cantThreads);
+
+	encolar_con = vector<infoEncolar *>(cantThreads, nullptr);
 	atendidos = vector<bool>(cantThreads,false);
 	for(int i = 0; i < g_grafo.numVertices; i++){
 		randomNodes[i] = i;
@@ -356,26 +427,11 @@ void mstParalelo(int cantThreads){
 	randomNodes.resize(cantThreads);
 	for(int i = 0; i < randomNodes.size(); i++){
 		arrayParams[i].id = i;
-		arrayParams[i].nodoActual = randomNodes[i];
-		g_colores[randomNodes[i]] = arrayParams[i].id;
 		arrayParams[i].arbol_local = Grafo();
 		arrayParams[i].distancia.assign(g_grafo.numVertices,IMAX);
 		arrayParams[i].distanciaNodo.assign(g_grafo.numVertices,-1);
 		arrayParams[i].colores = vector<int>(g_grafo.numVertices, BLANCO);
-		arrayParams[i].colores[arrayParams[i].nodoActual] = arrayParams[i].id;
-		arrayParams[i].arbol_local.numVertices++;
 	}
-
-	for(int i = 0; i < cantThreads; i++){
-		threadParams* param = &arrayParams[i];
-		//Descubrir vecinos: los pinto y calculo distancias
-		pintarVecinos(param->nodoActual, *param);
-		param->distancia[param->nodoActual] = IMAX;
-		//Busco el nodo más cercano que no esté en el árbol, pero sea alcanzable
-		param->nodoActual = min_element(param->distancia.begin(),
-														param->distancia.end()) - param->distancia.begin();
-	}
-
 
 	//Lanzamos los threads
     for (int i = 0; i < cantThreads; ++i)
