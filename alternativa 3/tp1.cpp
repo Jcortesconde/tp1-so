@@ -264,19 +264,42 @@ bool pintarNodo(int num, threadParams &param){
 	assert(thread_que_pinto != param.id);
 	bool expected = false;
 	bool value = true;
-	if(thread_que_pinto != BLANCO){
+	g_colas_mutex[param.id].lock();
+	
+	bool encolar_con_otro = false;
+
+
+	if(*encolaron[param.id]){
+		debugMutex.lock();
+		printf("[%d] encolo con otro\n", param.id);
+		debugMutex.unlock();
+		thread_que_pinto = encolar_con[param.id] -> otro_thread_id;
+		param.nodoActual = encolar_con[param.id] -> nodo_contiguo;
+		debugMutex.lock();
+		printf("[%d] se va a meter en %d con el nodo %d por que me dijeron\n", param.id, thread_que_pinto, param.nodoActual);
+		debugMutex.unlock();
+		//Lockeo la cola a la cual me voy a pushear
+		
+		g_colas_mutex[thread_que_pinto].lock();
+		//Me pusheo a la cola
+		g_colas_fusion[thread_que_pinto].push(&param);
+		//Unlockeo la cola a la cual me pushie
+		g_colas_mutex[thread_que_pinto].unlock();
+		//Unlockeo el nodo por si otro tambien lo quiere pintar
+		g_colores_mutex[num].unlock();
+        
+		// Espero a que me atiendan
+		while(!atendidos[param.id]){}
+			return false;	
+	}
+	g_colas_mutex[param.id].unlock();
+	if(thread_que_pinto != BLANCO || encolar_con_otro){
 		//Si mi id es mayor al del thread con el que colisione, me encolo y espero
-		g_colas_mutex[param.id].lock();
-		bool encolar_con_otro = false;
-		if( !encolaron[param.id] -> compare_exchange_strong(expected, value)){
-			thread_que_pinto = encolar_con[param.id] -> otro_thread_id;
-			param.nodoActual = encolar_con[param.id] -> nodo_contiguo;
-			encolar_con_otro = true;
-		}
-		g_colas_mutex[param.id].unlock();
 		if(thread_que_pinto < param.id || encolar_con_otro){
-			//Unlockeo el nodo por si otro tambien lo quiere pintar
-			g_colores_mutex[num].unlock();
+			encolaron[param.id] -> compare_exchange_strong(expected, value);
+			debugMutex.lock();
+			printf("[%d] se va a meter en %d con el nodo %d\n", param.id, thread_que_pinto, param.nodoActual);
+			debugMutex.unlock();
 			//Lockeo la cola a la cual me voy a pushear
 			
 			g_colas_mutex[thread_que_pinto].lock();
@@ -284,6 +307,8 @@ bool pintarNodo(int num, threadParams &param){
 			g_colas_fusion[thread_que_pinto].push(&param);
 			//Unlockeo la cola a la cual me pushie
 			g_colas_mutex[thread_que_pinto].unlock();
+			//Unlockeo el nodo por si otro tambien lo quiere pintar
+			g_colores_mutex[num].unlock();
 	        
 			// Espero a que me atiendan
 			while(!atendidos[param.id]){}
@@ -294,14 +319,21 @@ bool pintarNodo(int num, threadParams &param){
 			g_colores_mutex[num].unlock();
 			//if(g_colas_fusion[param.id].empty()) return false;
 			
-			debugMutex.lock();
-			printf("[%d] me econtre con %d por el nodo %d\n", param.id, thread_que_pinto, num);
-			debugMutex.unlock();
-			
 			g_colas_mutex[thread_que_pinto].lock();
+			
+			debugMutex.lock();
+			printf("[%d] me encontre con %d por el nodo %d y mi cola esta empty %d\n", param.id, thread_que_pinto, num, g_colas_fusion[param.id].empty());
+			debugMutex.unlock();
+			expected = false;
+			value = true;
 			if(g_colas_fusion[param.id].empty() && encolaron[thread_que_pinto] -> compare_exchange_strong(expected, value)){
 				encolar_con[thread_que_pinto] = new infoEncolar(param.id, num);
+				
+				debugMutex.lock();
+				printf("[%d] le dijo a %d que se encole con el nodo %d\n", param.id, thread_que_pinto, num);
+				debugMutex.unlock();
 				g_colas_mutex[thread_que_pinto].unlock();
+				
 				while(g_colas_fusion[param.id].empty() && !algunoTermino){
 					//ojo con optimizar sin poner algo aca
 				}
@@ -382,8 +414,9 @@ void* mstThread(void* p_param){
 		atendidos[i] = true;
 	}
     restart:
-    	restart_thread(param);
     	printf("[%d] restart\n", param.id);
+    	restart_thread(param);
+
     end:
     printf("[%d] vertices %d peso %d\n", param.id, param.arbol_local.numVertices, param.arbol_local.pesoTotal());
     return nullptr;
@@ -394,6 +427,9 @@ void restart_thread( threadParams param){
 	param.distancia.assign(g_grafo.numVertices,IMAX);
 	param.distanciaNodo.assign(g_grafo.numVertices,-1);
 	param.colores = vector<int>(g_grafo.numVertices, BLANCO);
+	encolar_con[param.id] = nullptr;
+
+	encolaron[param.id] -> store(false);
 	mstThread(&param);
 }
 
@@ -411,13 +447,14 @@ void mstParalelo(int cantThreads){
 	*encolaron[i] = aux;
 	}
 
+	encolar_con = vector<infoEncolar *>(cantThreads, nullptr);
+
 	g_colores = vector<int>(g_grafo.numVertices, BLANCO);
 	g_colores_mutex = vector<mutex>(g_grafo.numVertices);
 	g_colas_fusion = vector<queue<threadParams*>>(cantThreads);
 	g_colas_mutex = vector<mutex>(cantThreads);
 	g_fusion_mutex = vector<mutex>(cantThreads);
 
-	encolar_con = vector<infoEncolar *>(cantThreads, nullptr);
 	atendidos = vector<bool>(cantThreads,false);
 	for(int i = 0; i < g_grafo.numVertices; i++){
 		randomNodes[i] = i;

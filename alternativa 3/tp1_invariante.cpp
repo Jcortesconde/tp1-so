@@ -16,6 +16,10 @@ using namespace std;
 #define GRIS -20
 #define NEGRO -30
 
+/* MAXIMO VALOR DE INT */
+int IMAX = numeric_limits<int>::max();
+
+
 
 struct threadParams{
     int id;
@@ -25,12 +29,24 @@ struct threadParams{
     vector<int> distancia; //(g->cantNodos, IMAX);
     vector<int> distanciaNodo;
     vector<int> colores;
+    threadParams(int index, int cantNodos){
+    	nodoActual = -1;
+    	arbol_local = Grafo();
+    	id = index;
+    	distancia.assign(cantNodos,IMAX);
+		distanciaNodo.assign(cantNodos,-1);
+		colores = vector<int>(cantNodos, BLANCO);
+    }
 };
+
+
+void restart_thread(threadParams);
 
 //COLORES de los nodos
 vector<int> g_colores;
 
 vector<queue<threadParams*>> g_colas_fusion;
+vector<threadParams*> params;
 
 //Grafo (variable global)
 Grafo g_grafo; 
@@ -53,8 +69,6 @@ mutex debugMutex;
 
 //Variable atomica
 bool algunoTermino;
-/* MAXIMO VALOR DE INT */
-int IMAX = numeric_limits<int>::max();
 
 
 //Pinto el nodo de negro para marcar que fue puesto en el árbol
@@ -274,7 +288,9 @@ bool pintarNodo(int num, threadParams &param){
 			param.arbol_local.numVertices += 1;
 			g_colores[num] = param.id;
 			param.colores[num] = param.id;
-			param.arbol_local.insertarEje(num,param.distanciaNodo[num],param.distancia[num]);
+			if(param.arbol_local.numVertices > 1){
+				param.arbol_local.insertarEje(num,param.distanciaNodo[num],param.distancia[num]);
+			}
 			param.distancia[num] = IMAX;
 			
 		}
@@ -299,7 +315,7 @@ bool todoDeUnColor(int id){
 void* mstThread(void* p_param){
 	auto pesoEjes = 0;
 	threadParams param = *((threadParams*)p_param);
-
+	param.nodoActual = 0;
 	  while(param.arbol_local.numVertices != g_grafo.numVertices){
 		auto numEjes = param.arbol_local.numEjes;
 	  	if(algunoTermino) goto end;
@@ -332,17 +348,23 @@ void* mstThread(void* p_param){
 		atendidos[i] = true;
 	}
 	restart:
-	return nullptr;
+	restart_thread( param);
     end:
     return nullptr;
+}
+void restart_thread( threadParams param){
+	param.arbol_local = Grafo();
+	param.distancia.assign(g_grafo.numVertices,IMAX);
+	param.distanciaNodo.assign(g_grafo.numVertices,-1);
+	param.colores = vector<int>(g_grafo.numVertices, BLANCO);
+	mstThread(&param);
 }
 
 
 void mstParalelo(int cantThreads){
 	pthread_t thread[cantThreads];
 	//Array de structs que contienen los parametros de los threads
-    threadParams arrayParams[cantThreads];
-	//Le asignamos un numero random unico a cada thread
+    //Le asignamos un numero random unico a cada thread
 	vector<int> randomNodes(g_grafo.numVertices);
 	//INICIALIZACION DE VARIABLES GLOBALES
 	g_colores = vector<int>(g_grafo.numVertices, BLANCO);
@@ -351,26 +373,15 @@ void mstParalelo(int cantThreads){
 	g_colas_mutex = vector<mutex>(cantThreads);
 	g_fusion_mutex = vector<mutex>(cantThreads);
 	atendidos = vector<bool>(cantThreads,false);
-	for(int i = 0; i < g_grafo.numVertices; i++){
-		randomNodes[i] = i;
-	}
-	//srand(time(0));
-	std::random_shuffle(randomNodes.begin(),randomNodes.end());
-	randomNodes.resize(cantThreads);
-	for(int i = 0; i < randomNodes.size(); i++){
-		arrayParams[i].id = i;
-		arrayParams[i].nodoActual = randomNodes[i];
-		g_colores[randomNodes[i]] = arrayParams[i].id;
-		arrayParams[i].arbol_local = Grafo();
-		arrayParams[i].distancia.assign(g_grafo.numVertices,IMAX);
-		arrayParams[i].distanciaNodo.assign(g_grafo.numVertices,-1);
-		arrayParams[i].colores = vector<int>(g_grafo.numVertices, BLANCO);
-		arrayParams[i].colores[arrayParams[i].nodoActual] = arrayParams[i].id;
-		arrayParams[i].arbol_local.numVertices++;
+	
+	params.resize(cantThreads);
+	for(int i = 0; i < cantThreads; i++){
+
+		params[i] = new threadParams(i, g_grafo.numVertices);
 	}
 
 	for(int i = 0; i < cantThreads; i++){
-		threadParams* param = &arrayParams[i];
+		threadParams* param = params[i];
 		//Descubrir vecinos: los pinto y calculo distancias
 		pintarVecinos(param->nodoActual, *param);
 		param->distancia[param->nodoActual] = IMAX;
@@ -382,7 +393,7 @@ void mstParalelo(int cantThreads){
 
 	//Lanzamos los threads
     for (int i = 0; i < cantThreads; ++i)
-    	pthread_create(&thread[i], nullptr, mstThread, &arrayParams[i]);
+    	pthread_create(&thread[i], nullptr, mstThread, params[i]);
  	for (int i = 0; i < cantThreads; ++i)
     	pthread_join(thread[i], nullptr);
 }
