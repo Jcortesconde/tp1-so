@@ -251,8 +251,10 @@ bool chequeoDeCola(threadParams* thread){
 	while(!g_colas_fusion[thread->id].empty()){
 		threadParams* otroThread = g_colas_fusion[thread->id].front();
 		g_colas_fusion[thread->id].pop();
+    printf("[%d] voy a comer a %d en el nodo %d\n",thread->id, otroThread->id );
 		fusionarArboles(otroThread, thread);
 		atendidos[otroThread->id] = true;
+    printf("[%d] me comi a %d\n", thread->id, otroThread->id);
     otroThread->puedo_pintar.unlock();
 	}
 	g_colas_mutex[thread->id].unlock();
@@ -268,9 +270,11 @@ bool pintarNodo(int num, threadParams* param){
   bool value = true;
 	if(colorFusion != BLANCO){
 		//Si mi id es mayor al del thread con el que colisione, me encolo y espero
+    printf("[%d] me encontre con %d por el nodo %d\n", param->id, colorFusion, num);
 		if(colorFusion < param->id && param->encolado.compare_exchange_strong(expected, value)){
 			//Lockeo la cola a la cual me voy a pushear
 			g_colas_mutex[g_colores[num]].lock();
+      printf("[%d] me encontre con %d por el nodo %d y me encolé\n", param->id, colorFusion, num);
 			//Me pusheo a la cola
 			g_colas_fusion[g_colores[num]].push(param);
 			//Unlockeo la cola a la cual me pushie
@@ -282,12 +286,17 @@ bool pintarNodo(int num, threadParams* param){
 
 			while(!atendidos[param->id]){}
 				return false;
-		}
+		} else if (colorFusion < param->id) {
+      while(!atendidos[param->id]){}
+      return false;
+    }
 		else{
 			//Unlockeo el nodo por si otro tambien lo quiere pintar
       threadParams* threadAComer = params[colorFusion];
+      printf("[%d] me encontre con %d por el nodo %d\n", param->id, threadAComer->id, num);
       threadAComer->puedo_pintar.lock();
       if (threadAComer->encolado.compare_exchange_strong(expected, value)) {
+        printf("[%d] me encontre con %d por el nodo %d y lo encolé\n", param->id, threadAComer->id, num);
         g_colas_mutex[param->id].lock();
   			//Pusheo al que voy a comer a la cola
   			g_colas_fusion[param->id].push(threadAComer);
@@ -303,6 +312,9 @@ bool pintarNodo(int num, threadParams* param){
 			return true;
 		}
 	} else{
+    if (param->id != 0) {
+      printf("[%d] pinté el nodo %d\n", param->id, num);
+    }
 			param->arbol_local.numVertices += 1;
 			g_colores[num] = param->id;
 			param->colores[num] = param->id;
@@ -330,6 +342,14 @@ bool todoDeUnColor(int id){
 	return true;
 }
 
+bool meEstanEncolando(threadParams* param) {
+  if (param->encolado.load()) {
+    while(!atendidos[param->id]){}
+    return true;
+  }
+  return false;
+}
+
 void* mstThread(void* p_param){
 	auto pesoEjes = 0;
 	threadParams* param = ((threadParams*)p_param);
@@ -340,7 +360,7 @@ void* mstThread(void* p_param){
 	  	int numeroVertices = param->arbol_local.numVertices;
 		//Lo pinto de NEGRO para marcar que lo agregué al árbol y borro la distancia
     param->puedo_pintar.lock();
-		if(!pintarNodo(param->nodoActual,param)){
+		if(meEstanEncolando(param) || !pintarNodo(param->nodoActual,param)){
 		    goto restart;
 		}
     param->puedo_pintar.unlock();
@@ -375,6 +395,10 @@ void restart_thread( threadParams* param){
 	param->distanciaNodo.assign(g_grafo.numVertices,-1);
 	param->colores = vector<int>(g_grafo.numVertices, BLANCO);
   param->puedo_pintar.unlock();
+  bool encoladoReset = false;
+  param->encolado.store(encoladoReset);
+  atendidos[param->id] = false;
+  printf("[%d] reset\n", param->id);
 	mstThread(param);
 }
 
