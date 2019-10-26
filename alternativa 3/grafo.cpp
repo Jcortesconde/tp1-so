@@ -76,7 +76,7 @@ void Grafo::imprimirGrafo() {
 
   int suma = 0;
 
-  for (int i = 0; i < 14; ++i) {
+  for (int i = 0; i < listaDeAdyacencias.size(); ++i) {
     cout << "\t" << i << ": - ";
     for(const Eje &Eje : listaDeAdyacencias[i]) {
       cout << "(" << Eje.nodoDestino << "," << Eje.peso << ") - ";
