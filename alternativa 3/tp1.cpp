@@ -183,10 +183,11 @@ void pintarVecinos(int nodo, threadParams* param){
   }
 
 }
+
 //El emisor le pasa su data al receptor
 void fusionarArboles(threadParams* emisor, threadParams* receptor){
 	printf("[%d] tiene %d nodos y %d ejes, el emisor %d tiene %d nodos y %d ejes\n",
-		receptor->id, receptor->arbol_local.numVertices, receptor->arbol_local.numEjes, 
+		receptor->id, receptor->arbol_local.numVertices, receptor->arbol_local.numEjes,
 		emisor->id, emisor->arbol_local.numVertices, emisor->arbol_local.numEjes);
 	for(int i = 0; i < g_colores.size(); i++){
 		if(emisor->colores[i] == emisor->id){
@@ -229,7 +230,7 @@ void fusionarArboles(threadParams* emisor, threadParams* receptor){
 	int nodo, otroNodo, pesoArista = -1;
 	if(receptor-> arbol_local.numVertices  > 0 && emisor -> arbol_local.numVertices  > 0){
 		printf("[%d] nodoActual %d el del %d es %d\n", receptor -> id ,receptor -> nodoActual, emisor -> id ,emisor -> nodoActual);
-		
+
 		if(emisor->arbol_local.listaDeAdyacencias.count(receptor -> nodoActual)!= 0){
 			printf("[%d] %d tiene mi nodo actual %d en su arbol\n", receptor-> id, emisor->id,receptor->nodoActual);
 			nodo = receptor-> nodoActual;
@@ -240,7 +241,7 @@ void fusionarArboles(threadParams* emisor, threadParams* receptor){
 			printf("[%d] %d tiene su nodo actual %d en su arbol\n", receptor-> id, emisor->id,emisor->nodoActual);
 			nodo = emisor -> nodoActual;
 			otroNodo = receptor -> distanciaNodo[nodo];
-			pesoArista = receptor -> distancia[nodo];	
+			pesoArista = receptor -> distancia[nodo];
 		}
 		printf("[%d] va a unir el eje (%d, %d) que comparte con %d\n", receptor -> id, nodo, otroNodo, emisor -> id);
 		assert(nodo != -1);
@@ -341,9 +342,8 @@ bool pintarNodo(int num, threadParams* param){
 				param->arbol_local.insertarEje(num,param->distanciaNodo[num],param->distancia[num]);
 			}
 			param->distancia[num] = IMAX;
-
 		}
-    g_colores_mutex[num].unlock();
+  g_colores_mutex[num].unlock();
 	return true;
 }
 
@@ -383,20 +383,22 @@ void* mstThread(void* p_param){
 		    goto restart;
 		}
     param->puedo_pintar.unlock();
+    int nodoActualYaPintado = param->nodoActual;
+    //Lock  con la intencio de que no me terminen de comer hasta que no agregue a mis vecinos por lo que pinté
+    g_colores_mutex[nodoActualYaPintado].lock();
 		//QUIERO ACTUALIZAR MIS VECINOS SOLO SI PINTE ALGO O ME FUSIONE, SI NO, NO!
-		if(numeroVertices < param->arbol_local.numVertices){
+		if(numeroVertices < param->arbol_local.numVertices) {
 			//Descubrir vecinos: los pinto y calculo distancias
 			printf("[%d] busco pintar vecinos y actualizar nodo actual\n", param->id);
 			if(param->colores[param->nodoActual] == param->id){
 				printf("[%d] pinta vecinos y actualiza nodo actual\n", param->id);
-		
+
 				pintarVecinos(param->nodoActual, param);
 			//Busco el nodo más cercano que no esté en el árbol, pero sea alcanzable
-
 			param->nodoActual = min_element(param->distancia.begin(),param->distancia.end()) - param->distancia.begin();
 			}
 		}
-
+    g_colores_mutex[nodoActualYaPintado].unlock();
 	  }
 	printf("[%d] vertices %d ejes %d peso %d\n", param -> id, param -> arbol_local.numVertices, param->arbol_local.numEjes, param -> arbol_local.pesoTotal());
 	algunoTermino = true;
