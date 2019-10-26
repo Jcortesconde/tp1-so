@@ -325,7 +325,8 @@ bool pintarNodo(int num, threadParams* param){
       threadParams* threadAComer = params[colorFusion];
       printf("[%d] me encontre con %d por el nodo blah %d\n", param->id, threadAComer->id, num);
 			g_colores_mutex[num].unlock();
-      printf("[%d] me encontre con %d por el nodo %d y me fijo si esta encolado %d\n", param->id, threadAComer->id, num, meEstanEncolando(threadAComer));
+      printf("[%d] me encontre con %d por el nodo blah blah %d\n", param->id, threadAComer->id, num);
+      threadAComer->puedo_pintar.lock();
       if (threadAComer->encolado.compare_exchange_strong(expected, value)) {
         printf("[%d] me encontre con %d por el nodo %d y lo encolé\n", param->id, threadAComer->id, num);
         g_colas_mutex[param->id].lock();
