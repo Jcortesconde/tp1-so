@@ -29,6 +29,7 @@ public:
   Grafo() {
     numVertices = 0;
     numEjes = 0;
+    listaDeAdyacencias = map<int, vector<Eje> >();
   }
 
   int inicializar(string nombreArchivo);
@@ -36,6 +37,8 @@ public:
   vector<Eje>::iterator vecinosBegin(int num);
   vector<Eje>::iterator vecinosEnd(int num);
   void insertarEje(int nodoA, int nodoB, int peso);
+  int cantNodos();
+  int cantEjes();
   int pesoTotal();
 private:
   void incrementarTotalEjes();

@@ -59,11 +59,20 @@ void Grafo::insertarEje(int nodoA, int nodoB, int peso){
 void Grafo::incrementarTotalEjes(){
   numEjes += 1;
 }
-
+int Grafo::cantNodos(){
+  return listaDeAdyacencias.size();
+}
+int Grafo::cantEjes(){
+  int cant = 0;
+  for(map<int,vector<Eje>>::iterator it=listaDeAdyacencias.begin(); it!=listaDeAdyacencias.end(); ++it){
+    cant += it->second.size();
+  }
+  return cant;
+}
 int Grafo::pesoTotal(){
   int suma = 0;
-  for (int i = 0; i < numVertices; ++i) {
-    for(const Eje &Eje : listaDeAdyacencias[i]) {
+  for(map<int,vector<Eje>>::iterator it=listaDeAdyacencias.begin(); it!=listaDeAdyacencias.end(); ++it){
+    for(const Eje &Eje : it -> second ) {
       suma += Eje.peso;
     }
   }
@@ -75,10 +84,9 @@ void Grafo::imprimirGrafo() {
   cout << "Cantidad de ejes: " << numEjes << endl;
 
   int suma = 0;
-
-  for (int i = 0; i < listaDeAdyacencias.size(); ++i) {
-    cout << "\t" << i << ": - ";
-    for(const Eje &Eje : listaDeAdyacencias[i]) {
+  for(map<int,vector<Eje>>::iterator it=listaDeAdyacencias.begin(); it!=listaDeAdyacencias.end(); ++it){
+    cout << "\t" << it -> first << ": - ";
+    for(const Eje &Eje : it -> second) {
       cout << "(" << Eje.nodoDestino << "," << Eje.peso << ") - ";
       suma += Eje.peso;
     }

@@ -44,13 +44,26 @@ struct threadParams{
     }
 };
 
+struct infoMerge{
+	threadParams * emisor;
+	int nodo_emisor;
+	int nodo_receptor;
+	int peso;
+	infoMerge(threadParams* emi, int n_emisor, int n_receptor, int p){
+		emisor = emi;
+		nodo_emisor = n_emisor;
+		nodo_receptor = n_receptor;
+		peso = p;
+	}
+};
+
 
 void restart_thread(threadParams*);
 
 //COLORES de los nodos
 vector<int> g_colores;
 
-vector<queue<threadParams*>> g_colas_fusion;
+vector<queue<infoMerge>> g_colas_fusion;
 vector<threadParams*> params;
 
 //Grafo (variable global)
@@ -145,10 +158,10 @@ void mstSecuencial(Grafo *g){
 }
 
 void imprimirVector(vector<int> &toPrint){
-	for(auto i : toPrint){
-		cout << i << " ";
+	for(int i = 0; i<toPrint.size(); i++){
+		printf("(%d %d) ", i, toPrint[i]);
 	}
-	cout << endl;
+	printf("\n");
 }
 
 void imprimirCola(queue<threadParams*> &toPrint){
@@ -186,16 +199,17 @@ void pintarVecinos(int nodo, threadParams* param){
 }
 
 //El emisor le pasa su data al receptor
-void fusionarArboles(threadParams* emisor, threadParams* receptor){
-	printf("[%d] tiene %d nodos y %d ejes, el emisor %d tiene %d nodos y %d ejes\n",
-		receptor->id, receptor->arbol_local.numVertices, receptor->arbol_local.numEjes,
-		emisor->id, emisor->arbol_local.numVertices, emisor->arbol_local.numEjes);
-    emisor->listo_para_encolar.lock();
+void fusionarArboles(infoMerge& emisor_info, threadParams* receptor){
+	//debugMutex.lock();
+	threadParams * emisor = emisor_info.emisor;
+  emisor->listo_para_encolar.lock();
+
 	for(int i = 0; i < g_colores.size(); i++){
 		if(emisor->colores[i] == emisor->id){
+			assert(receptor -> colores[i] != receptor->id);
 			receptor->colores[i] = receptor->id;
 			receptor->distancia[i] = IMAX;
-			//if(receptor->distanciaNodo[i] == -1) receptor->distanciaNodo[i] = emisor->distanciaNodo[i];
+			receptor->distanciaNodo[i] = emisor->distanciaNodo[i];
 
 			//cambio el color en el grafo
 			g_colores_mutex[i].lock();
@@ -210,7 +224,6 @@ void fusionarArboles(threadParams* emisor, threadParams* receptor){
 			receptor->colores[i] = GRIS;
 
 		}
-
 	}
 
 	auto cantEjes = 0;
@@ -228,25 +241,14 @@ void fusionarArboles(threadParams* emisor, threadParams* receptor){
 	}
 	receptor->arbol_local.numEjes += cantEjes / 2;
 
-	//Agregamos el eje sobre el que se hizo la fusion
-	int nodo, otroNodo, pesoArista = -1;
 	if(receptor-> arbol_local.numVertices  > 0 && emisor -> arbol_local.numVertices  > 0){
-		printf("[%d] nodoActual %d el del %d es %d\n", receptor -> id ,receptor -> nodoActual, emisor -> id ,emisor -> nodoActual);
+		//Agregamos el eje sobre el que se hizo la fusion
+		int nodo = emisor_info.nodo_receptor;
+		int otroNodo = emisor_info.nodo_emisor;
+		int pesoArista = emisor_info.peso;
 
-		if(emisor->arbol_local.listaDeAdyacencias.count(receptor -> nodoActual)!= 0){
-			printf("[%d] %d tiene mi nodo actual %d en su arbol\n", receptor-> id, emisor->id,receptor->nodoActual);
-			nodo = receptor-> nodoActual;
-			otroNodo = emisor -> distanciaNodo[nodo];
-			pesoArista = emisor -> distancia[nodo];
-		}
-		else if(receptor ->arbol_local.listaDeAdyacencias.count(emisor -> nodoActual)!= 0){
-			printf("[%d] %d tiene su nodo actual %d en su arbol\n", receptor-> id, emisor->id,emisor->nodoActual);
-			nodo = emisor -> nodoActual;
-			otroNodo = receptor -> distanciaNodo[nodo];
-			pesoArista = receptor -> distancia[nodo];
-		}
-		printf("[%d] va a unir el eje (%d, %d) que comparte con %d\n", receptor -> id, nodo, otroNodo, emisor -> id);
 		assert(nodo != -1);
+		assert(otroNodo != -1);
 
 		receptor->arbol_local.insertarEje(nodo, otroNodo, pesoArista);
 	}
@@ -269,13 +271,11 @@ void fusionarArboles(threadParams* emisor, threadParams* receptor){
 bool chequeoDeCola(threadParams* thread){
 	g_colas_mutex[thread->id].lock();
 	while(!g_colas_fusion[thread->id].empty()){
-		threadParams* otroThread = g_colas_fusion[thread->id].front();
+		infoMerge otroThread = g_colas_fusion[thread->id].front();
 		g_colas_fusion[thread->id].pop();
-    printf("[%d] voy a comer a %d\n",thread->id, otroThread->id );
 		fusionarArboles(otroThread, thread);
-		atendidos[otroThread->id] = true;
-    printf("[%d] me comi a %d\n", thread->id, otroThread->id);
-    otroThread->puedo_pintar.unlock();
+		atendidos[(otroThread.emisor)->id] = true;
+    (otroThread.emisor)->puedo_pintar.unlock();
 	}
 	g_colas_mutex[thread->id].unlock();
 	return false;
@@ -299,22 +299,20 @@ bool pintarNodo(int num, threadParams* param){
   bool value = true;
 	if(colorFusion != BLANCO){
 		//Si mi id es mayor al del thread con el que colisione, me encolo y espero
-    printf("[%d] me encontre con %d por el nodo %d\n", param->id, colorFusion, num);
-		if(colorFusion < param->id && param->encolado.compare_exchange_strong(expected, value)){
+ 		if(colorFusion < param->id && param->encolado.compare_exchange_strong(expected, value)){
 			//Lockeo la cola a la cual me voy a pushear
-      param->puedo_pintar.unlock();
+      		param->puedo_pintar.unlock();
 			g_colas_mutex[g_colores[num]].lock();
-      printf("[%d] me encontre con %d por el nodo %d y me encolé\n", param->id, colorFusion, num);
 			//Me pusheo a la cola
-			g_colas_fusion[g_colores[num]].push(param);
+			infoMerge emisor(param, param->distanciaNodo[num], num,param->distancia[num]);
+			g_colas_fusion[g_colores[num]].push(emisor);
 			//Unlockeo la cola a la cual me pushie
 			g_colas_mutex[g_colores[num]].unlock();
 
 			// Espero a que me atiendan
 			//Unlockeo el nodo por si otro tambien lo quiere pintar
 			g_colores_mutex[num].unlock();
-      printf("[%d] me encontre con %d por el nodo %d y me encolé y ahora estoy esperando\n", param->id, colorFusion, num);
-			while(!atendidos[param->id]){}
+	 		while(!atendidos[param->id]){}
 				return false;
 		} else if (colorFusion < param->id) {
       while(!atendidos[param->id]){}
@@ -323,20 +321,17 @@ bool pintarNodo(int num, threadParams* param){
 		else{
 			//Unlockeo el nodo por si otro tambien lo quiere pintar
       threadParams* threadAComer = params[colorFusion];
-      printf("[%d] me encontre con %d por el nodo blah %d\n", param->id, threadAComer->id, num);
-			g_colores_mutex[num].unlock();
-      printf("[%d] me encontre con %d por el nodo blah blah %d\n", param->id, threadAComer->id, num);
+    	g_colores_mutex[num].unlock();
       threadAComer->puedo_pintar.lock();
       if (threadAComer->encolado.compare_exchange_strong(expected, value)) {
-        printf("[%d] me encontre con %d por el nodo %d y lo encolé\n", param->id, threadAComer->id, num);
         g_colas_mutex[param->id].lock();
   			//Pusheo al que voy a comer a la cola
-  			g_colas_fusion[param->id].push(threadAComer);
+  			infoMerge emisor(threadAComer, num, param->distanciaNodo[num],param->distancia[num]);
+  			g_colas_fusion[param->id].push(emisor);
   			//Unlockeo la cola a la cual me pushie
   			g_colas_mutex[param->id].unlock();
       } else {
         threadAComer->puedo_pintar.unlock();
-	      printf("[%d] me encontre con %d pero alguien ya lo habia encolado\n", param->id, threadAComer->id);
       }
       param->listo_para_encolar.lock();
 			while(!g_colas_fusion[param->id].empty()){
@@ -355,6 +350,9 @@ bool pintarNodo(int num, threadParams* param){
 			param->colores[num] = param->id;
 			if(param->arbol_local.numVertices > 1){
 				param->arbol_local.insertarEje(num,param->distanciaNodo[num],param->distancia[num]);
+			}
+			else{
+				param -> distanciaNodo[num] = -2;//es la raiz
 			}
 			param->distancia[num] = IMAX;
       g_colores_mutex[num].unlock();
@@ -382,6 +380,8 @@ void* mstThread(void* p_param){
 	auto pesoEjes = 0;
 	threadParams* param = ((threadParams*)p_param);
 	param->nodoActual = rand() % g_grafo.numVertices;
+	debugMutex.lock();
+	debugMutex.unlock();
 	  while(param->arbol_local.numVertices != g_grafo.numVertices){
 		auto numEjes = param->arbol_local.numEjes;
 	  	if(algunoTermino) goto end;
@@ -407,12 +407,12 @@ void* mstThread(void* p_param){
 		}
     param->listo_para_encolar.unlock();
 	  }
-	printf("[%d] vertices %d ejes %d peso %d\n", param -> id, param -> arbol_local.numVertices, param->arbol_local.numEjes, param -> arbol_local.pesoTotal());
+
 	algunoTermino = true;
 	//param.arbol_local.imprimirGrafo();
 	assert(param->arbol_local.numEjes == (g_grafo.numVertices - 1));
 	assert(g_grafo.numVertices == param->arbol_local.numVertices);
-	cout << param->arbol_local.pesoTotal() << endl;
+	printf("termino peso: %d\n",param->arbol_local.pesoTotal());
 	for(int i = 0; i < atendidos.size(); i++){
 		atendidos[i] = true;
 	}
@@ -431,7 +431,6 @@ void restart_thread( threadParams* param){
   bool encoladoReset = false;
   param->encolado.store(encoladoReset);
   atendidos[param->id] = false;
-  printf("[%d] reset\n", param->id);
 	mstThread(param);
 }
 
@@ -444,7 +443,7 @@ void mstParalelo(int cantThreads){
 	//INICIALIZACION DE VARIABLES GLOBALES
 	g_colores = vector<int>(g_grafo.numVertices, BLANCO);
 	g_colores_mutex = vector<mutex>(g_grafo.numVertices);
-	g_colas_fusion = vector<queue<threadParams*>>(cantThreads);
+	g_colas_fusion = vector<queue<infoMerge>>(cantThreads);
 	g_colas_mutex = vector<mutex>(cantThreads);
 	g_fusion_mutex = vector<mutex>(cantThreads);
 	atendidos = vector<bool>(cantThreads,false);
