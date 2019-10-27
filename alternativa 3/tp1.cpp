@@ -159,7 +159,9 @@ void mstSecuencial(Grafo *g){
 
 void imprimirVector(vector<int> &toPrint){
 	for(int i = 0; i<toPrint.size(); i++){
-		printf("(%d %d) ", i, toPrint[i]);
+		if(toPrint[i] != -1 && toPrint[i] != NEGRO && toPrint[i] != IMAX){
+			printf("(%d %d) ", i, toPrint[i]);
+		}
 	}
 	printf("\n");
 }
@@ -200,10 +202,13 @@ void pintarVecinos(int nodo, threadParams* param){
 
 //El emisor le pasa su data al receptor
 void fusionarArboles(infoMerge& emisor_info, threadParams* receptor){
-	//debugMutex.lock();
+	
 	threadParams * emisor = emisor_info.emisor;
   emisor->listo_para_encolar.lock();
-
+	printf("[%d] tiene %d nodos, %d ejes y %d peso, el emisor es %d y tiene %d nodos, %d ejes y %d peso\n",
+		receptor->id, receptor->arbol_local.numVertices, receptor->arbol_local.numEjes, receptor -> arbol_local.pesoTotal(),
+		emisor->id, emisor->arbol_local.numVertices, emisor->arbol_local.numEjes, emisor -> arbol_local.pesoTotal());
+	
 	for(int i = 0; i < g_colores.size(); i++){
 		if(emisor->colores[i] == emisor->id){
 			assert(receptor -> colores[i] != receptor->id);
@@ -246,9 +251,14 @@ void fusionarArboles(infoMerge& emisor_info, threadParams* receptor){
 		int nodo = emisor_info.nodo_receptor;
 		int otroNodo = emisor_info.nodo_emisor;
 		int pesoArista = emisor_info.peso;
-
+		debugMutex.lock();
+		printf("[%d] esta uniendo su arbol con el de %d con el eje (%d, %d p:%d)\n",
+			receptor -> id, emisor -> id, nodo, otroNodo, pesoArista);
+		printf("emisor\n");
+		imprimirVector(emisor -> distanciaNodo);
 		assert(nodo != -1);
 		assert(otroNodo != -1);
+		debugMutex.unlock();
 
 		receptor->arbol_local.insertarEje(nodo, otroNodo, pesoArista);
 	}
@@ -273,7 +283,14 @@ bool chequeoDeCola(threadParams* thread){
 	while(!g_colas_fusion[thread->id].empty()){
 		infoMerge otroThread = g_colas_fusion[thread->id].front();
 		g_colas_fusion[thread->id].pop();
+		debugMutex.lock();
+		printf("[%d] voy comer a %d, nodo actual es %d\n", thread -> id,(otroThread.emisor)->id, thread->nodoActual);
+		debugMutex.unlock();
 		fusionarArboles(otroThread, thread);
+		debugMutex.lock();
+		printf("[%d] comi a %d, nodo actual es %d\n", thread -> id,(otroThread.emisor)->id,thread->nodoActual);
+		debugMutex.unlock();
+		
 		atendidos[(otroThread.emisor)->id] = true;
     (otroThread.emisor)->puedo_pintar.unlock();
 	}
@@ -293,21 +310,33 @@ bool meEstanEncolando(threadParams* param) {
 bool pintarNodo(int num, threadParams* param){
 	g_colores_mutex[num].lock();
 	int colorFusion = g_colores[num];
-	//printf("[%d] queria pintar %d y era de %d\n", param -> id, num, colorFusion);
+	debugMutex.lock();
+	printf("[%d] queria pintar %d y era de %d, tiene %d nodos\n", param -> id, num, colorFusion, param -> arbol_local.numVertices);
 	assert(colorFusion != param->id);
-  bool expected = false;
+	debugMutex.unlock();
+	bool expected = false;
   bool value = true;
 	if(colorFusion != BLANCO){
 		//Si mi id es mayor al del thread con el que colisione, me encolo y espero
  		if(colorFusion < param->id && param->encolado.compare_exchange_strong(expected, value)){
+			
 			//Lockeo la cola a la cual me voy a pushear
-      		param->puedo_pintar.unlock();
+      param->puedo_pintar.unlock();
+      if(param -> arbol_local.numVertices >0){
+			
 			g_colas_mutex[g_colores[num]].lock();
 			//Me pusheo a la cola
 			infoMerge emisor(param, param->distanciaNodo[num], num,param->distancia[num]);
 			g_colas_fusion[g_colores[num]].push(emisor);
 			//Unlockeo la cola a la cual me pushie
-			g_colas_mutex[g_colores[num]].unlock();
+			debugMutex.lock();
+			printf("[%d] encontre a %d en el eje (%d, %d p:%d) y me encole\n", param -> id, colorFusion, param->distanciaNodo[num], num,param->distancia[num]);
+			debugMutex.unlock();
+			g_colas_mutex[g_colores[num]].unlock();	
+      }
+      else{
+      	atendidos[param->id] = true;
+      }
 
 			// Espero a que me atiendan
 			//Unlockeo el nodo por si otro tambien lo quiere pintar
@@ -324,14 +353,32 @@ bool pintarNodo(int num, threadParams* param){
     	g_colores_mutex[num].unlock();
       threadAComer->puedo_pintar.lock();
       if (threadAComer->encolado.compare_exchange_strong(expected, value)) {
-        g_colas_mutex[param->id].lock();
-  			//Pusheo al que voy a comer a la cola
-  			infoMerge emisor(threadAComer, num, param->distanciaNodo[num],param->distancia[num]);
-  			g_colas_fusion[param->id].push(emisor);
-  			//Unlockeo la cola a la cual me pushie
-  			g_colas_mutex[param->id].unlock();
+      	if(g_colores[num] != colorFusion){
+      	//NO HACE FALTA LOCKEAR ACA, POR QUE UN THREAD NO PUEDE REINICIAR Y VOLVER A TENER EL MISMO NODO, COMO MUCHO LO TIENE ALGUIEN DE MENOR NIVEL Y NO ME IMPORTA QUIEN
+      		bool reverted = false;
+      		threadAComer->encolado = reverted;
+
+	        threadAComer->puedo_pintar.unlock();
+      		debugMutex.lock();
+					printf("[%d] encontre a %d en el eje (%d, %d p:%d) pero ya habia reseteado\n", param -> id,threadAComer->id , num, param->distanciaNodo[num], param->distancia[num]);
+					debugMutex.unlock();
+	        	
+      	}
+      	else{
+    			//Pusheo al que voy a comer a la cola
+
+	      	g_colas_mutex[param->id].lock();
+					infoMerge emisor(threadAComer, num, param->distanciaNodo[num],param->distancia[num]);
+					g_colas_fusion[param->id].push(emisor);
+					debugMutex.lock();
+					printf("[%d] encontre a %d en el eje (%d, %d p:%d) y lo encole\n", param -> id,threadAComer->id , num, param->distanciaNodo[num], param->distancia[num]);
+					debugMutex.unlock();
+	        	
+					g_colas_mutex[param->id].unlock();
+      	}
+			//Unlockeo la cola a la cual me pushie
       } else {
-        threadAComer->puedo_pintar.unlock();
+    		threadAComer->puedo_pintar.unlock();
       }
       param->listo_para_encolar.lock();
 			while(!g_colas_fusion[param->id].empty()){
@@ -340,9 +387,6 @@ bool pintarNodo(int num, threadParams* param){
 			return true;
 		}
 	} else if(!meEstanEncolando(param)){
-    if (param->id != 0) {
-      //printf("[%d] pinté el nodo %d\n", param->id, num);
-    }
       //Como voy a pintar, tengo que esperar a marcar mis vecinos antes de dejar que me coman
       param->listo_para_encolar.lock();
 			param->arbol_local.numVertices += 1;
@@ -380,8 +424,6 @@ void* mstThread(void* p_param){
 	auto pesoEjes = 0;
 	threadParams* param = ((threadParams*)p_param);
 	param->nodoActual = rand() % g_grafo.numVertices;
-	debugMutex.lock();
-	debugMutex.unlock();
 	  while(param->arbol_local.numVertices != g_grafo.numVertices){
 		auto numEjes = param->arbol_local.numEjes;
 	  	if(algunoTermino) goto end;
@@ -393,12 +435,14 @@ void* mstThread(void* p_param){
 		}
     param->puedo_pintar.unlock();
 		//QUIERO ACTUALIZAR MIS VECINOS SOLO SI PINTE ALGO O ME FUSIONE, SI NO, NO!
-		if(numeroVertices < param->arbol_local.numVertices) {
+    if(numeroVertices < param->arbol_local.numVertices) {
 			//Descubrir vecinos: los pinto y calculo distancias
-			//printf("[%d] busco pintar vecinos y actualizar nodo actual\n", param->id);
+			if(param->colores[param->nodoActual] != param->id){
+				debugMutex.lock();
+				printf("[%d] busco pintar vecinos y actualizar nodo actual %d que no es mio, es de %d\n", param->id, param->nodoActual,param->colores[param->nodoActual]);
+				debugMutex.unlock();
+			}
 			if(param->colores[param->nodoActual] == param->id){
-				//printf("[%d] pinta vecinos y actualiza nodo actual\n", param->id);
-
 				pintarVecinos(param->nodoActual, param);
         //Una vez que termino de marcar mis vecinos estoy liste para que me coman
 			//Busco el nodo más cercano que no esté en el árbol, pero sea alcanzable
@@ -416,12 +460,18 @@ void* mstThread(void* p_param){
 	for(int i = 0; i < atendidos.size(); i++){
 		atendidos[i] = true;
 	}
-	restart:
-	restart_thread( param);
+	
   end:
   return nullptr;
+  restart:
+	restart_thread( param);
 }
 void restart_thread( threadParams* param){
+	if(param->arbol_local.numVertices > 0){
+		debugMutex.lock();
+		printf("[%d] resetea\n", param -> id);
+		debugMutex.unlock();
+	}
 	param->arbol_local = Grafo();
 	param->distancia.assign(g_grafo.numVertices,IMAX);
 	param->distanciaNodo.assign(g_grafo.numVertices,-1);
@@ -470,6 +520,8 @@ int main(int argc, char const * argv[]) {
   }
 
 
+
+	printf("asd\n");
 
   string nombre;
   nombre = string(argv[1]);

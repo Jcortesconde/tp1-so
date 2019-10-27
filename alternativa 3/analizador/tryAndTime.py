@@ -25,10 +25,10 @@ for file_name in onlyfiles:
             with open('run.txt','w+') as fout:
                 command = "../TP1 "+file_name+" "+str(thread_count)
                 out=subprocess.call([command],stdout=fout,shell=True)
+                fout.write("\nThis run %d\n" % (i))
                 fout.seek(0)
-                # save output (if any) in variable
-                output=fout.read()
-            print(output)
+                
+
             if(not_good_weight("run.txt")):
                 print("not good weight, at run",i)
                 break
