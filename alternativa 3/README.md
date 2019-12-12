@@ -1,21 +1,8 @@
 #Instrucciones para compilar y ejecutar los tests
 
 #Tests de correctitud
-Para compilar se debe utilizar el comando "make TP1INV", que
-generara el archivo "TP1INV".
-No se debe ejecutar directamente, si no que para ejecutar los 
-tests se debe utilizar el script de Bash "run_INV_tests", este por
-default hace 10000 iteraciones de los grafos en la carpeta instances 
-y se asegura que generen correctamente el árbol generador mínimo. 
-En el caso de que el test sea exitoso se imprimira "DONE, ALL TESTS PASSED".
+Para compilar se debe utilizar el comando "make"
+Para correr test primero se tiene que ir a la carpeta de grafos y correr el script, modificar los parametros que se quieran, luego en la carpeta Analizador hay dos scripts catch error (este tiene el archivo hardcodeado, pero se puede deshardcodear facilmente) nos permite correr varias veces el programa hasta que falla y se guarda en un archivo run.txt (el actual tiene el error descripto en el infor entre el thread 0 y el thread 1) y el otro es tryAndTime que corre experimentos, tambien hay un jupyter notebook que es el generador de graficos.
 
-#Tests de tiempo
-Para compilar se debe utilizar el comando "make TP1T", que
-generará el archivo "TP1_testing".
-Necesita tener creada la carpeta "generar_grafos".
-Primero Correr los scripts python grafoCompleto.py 1000, y python grafoRandom.py 1000.
-Para ejecutar los tests se puede ejecutar el comando python3 correTP1.py 1 K , 
-pasando como argumento el número de iteraciones y la letra "R" o "K" como segundo 
-argumento para especificar si se deben utilizar las instancias de grafos aleatorios
- o completos respectivamente.
+El codigo tiene comentarios ya que es un codigo que no cumple al 100% con lo pedido entonces todavia esta en etapa de arreglarlo.
 
